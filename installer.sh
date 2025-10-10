@@ -24,7 +24,7 @@ require_root() {
 install_deps() {
   log "📦 安装依赖..."
   apt update -y >/dev/null
-  apt install -y ipset iptables ip6tables curl jq >/dev/null
+  apt install -y ipset iptables curl jq >/dev/null
 }
 
 create_main_script() {
