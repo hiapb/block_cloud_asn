@@ -1,7 +1,7 @@
 #!/bin/bash
 # ================================================================
 #  中国云厂商 ASN 封禁脚本 - 安静版交互菜单
-#  作者：hiapb（增强版 by ChatGPT）
+#  作者：hiapb
 # ================================================================
 set -euo pipefail
 
@@ -134,7 +134,7 @@ show_menu() {
   case "$choice" in
     1) install_firewall ;;
     2) uninstall_firewall ;;
-    3) less "$LOGFILE" ;;
+    3) less -f "$LOGFILE" ;;
     4) echo "再见 👋"; exit 0 ;;
     *) echo "❌ 无效选项"; sleep 1; show_menu ;;
   esac
