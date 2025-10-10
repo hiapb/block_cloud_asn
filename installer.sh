@@ -133,24 +133,76 @@ refresh_rules() {
 show_blocked_info() {
   if ! ipset list cloudblock &>/dev/null; then
     echo "❌ 当前未创建封禁规则。"
-    read -p "按回车键返回菜单..." 
+    read -p "按回车键返回菜单..."
     return
   fi
 
-  total=$(ipset -L cloudblock | grep -cE '^[0-9]')
-  echo "📊 当前已封禁 IPv4 段数：$total"
-  echo "==============================="
+  # 读取所有条目到数组（每行一个）
+  mapfile -t lines < <(ipset -L cloudblock | grep -E '^[0-9]')
+  total=${#lines[@]}
 
-  # 如果条目很多，就分页显示
-  if [ "$total" -gt 2000 ]; then
-    echo "⚠️  封禁条目过多（$total 条），自动分页显示（可按空格翻页，q 退出）..."
-    ipset list cloudblock | grep -E '^[0-9]' | less
-  else
-    ipset list cloudblock | grep -E '^[0-9]' || echo "(无封禁条目)"
+  if [ "$total" -eq 0 ]; then
+    echo "📭 当前没有封禁条目。"
+    read -p "按回车键返回菜单..."
+    return
   fi
 
-  echo "==============================="
-  read -p "按回车键返回菜单..."
+  page_size=20                        # 每页显示多少条（可按需调整）
+  pages=$(( (total + page_size - 1) / page_size ))
+  page=1
+
+  while true; do
+    clear
+    echo "📊 当前已封禁 IPv4 段数：$total    第 ${page}/${pages} 页"
+    echo "-------------------------------------------------"
+    start=$(( (page - 1) * page_size ))
+    end=$(( start + page_size ))
+    [ "$end" -gt "$total" ] && end=$total
+
+    for ((i = start; i < end; i++)); do
+      echo "${lines[i]}"
+    done
+
+    echo "-------------------------------------------------"
+    echo "[n] 下一页(回车同n)  [p] 上一页  [f] 第一页  [l] 最后一页"
+    echo "[a] 显示全部  [e] 导出到 /root/cloudblock_list.txt  [q] 返回菜单"
+    read -p "选择: " opt
+
+    case "$opt" in
+      n|N|"")
+        if [ "$page" -lt "$pages" ]; then page=$((page + 1)); else
+          echo "已到最后一页。"
+          sleep 1
+        fi
+        ;;
+      p|P)
+        if [ "$page" -gt 1 ]; then page=$((page - 1)); else
+          echo "已到第一页。"
+          sleep 1
+        fi
+        ;;
+      f|F) page=1 ;;
+      l|L) page=$pages ;;
+      a|A)
+        clear
+        printf "%s\n" "${lines[@]}"
+        echo "------------------ 显示完毕 ------------------"
+        read -p "按回车返回分页显示..."
+        ;;
+      e|E)
+        printf "%s\n" "${lines[@]}" > /root/cloudblock_list.txt
+        echo "✅ 已导出到 /root/cloudblock_list.txt"
+        read -p "按回车返回分页显示..."
+        ;;
+      q|Q)
+        break
+        ;;
+      *)
+        echo "⚠️ 无效选项"
+        sleep 1
+        ;;
+    esac
+  done
 }
 
 # ==============================
