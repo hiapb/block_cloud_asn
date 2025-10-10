@@ -133,12 +133,24 @@ refresh_rules() {
 show_blocked_info() {
   if ! ipset list cloudblock &>/dev/null; then
     echo "❌ 当前未创建封禁规则。"
+    read -p "按回车键返回菜单..." 
     return
   fi
+
   total=$(ipset -L cloudblock | grep -cE '^[0-9]')
   echo "📊 当前已封禁 IPv4 段数：$total"
-  echo "🔍 示例（前 20 条）："
-  ipset list cloudblock | grep -E '^[0-9]' | head -n 20
+  echo "==============================="
+
+  # 如果条目很多，就分页显示
+  if [ "$total" -gt 2000 ]; then
+    echo "⚠️  封禁条目过多（$total 条），自动分页显示（可按空格翻页，q 退出）..."
+    ipset list cloudblock | grep -E '^[0-9]' | less
+  else
+    ipset list cloudblock | grep -E '^[0-9]' || echo "(无封禁条目)"
+  fi
+
+  echo "==============================="
+  read -p "按回车键返回菜单..."
 }
 
 # ==============================
