@@ -117,6 +117,7 @@ install_firewall() {
   log "🚀 立即执行首次封禁..."
   bash "$SCRIPT_PATH"
   log "✅ 安装完成！日志位置：$LOGFILE"
+  sleep 2
 }
 
 refresh_rules() {
@@ -193,6 +194,9 @@ uninstall_firewall() {
   rm -f "$SCRIPT_PATH" "$CRON_FILE" "$LOGFILE"
   apt-get remove -y -qq ipset iptables jq >/dev/null 2>&1 || true
   log "✅ 已卸载并清理所有相关文件与依赖。"
+  echo "👋 已完成卸载并退出。"
+  sleep 2
+  exit 0
 }
 
 show_menu() {
