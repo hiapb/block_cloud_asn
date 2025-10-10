@@ -1,7 +1,7 @@
 #!/bin/bash
 # ================================================================
-#  中国云厂商 ASN 封禁管理脚本 - 含白名单功能
-#  作者：hiapb（修改增强版 by ChatGPT）
+#  中国云厂商 ASN 封禁管理脚本
+#  作者：hiapb
 # ================================================================
 set -euo pipefail
 
@@ -191,6 +191,7 @@ uninstall_firewall() {
   ipset destroy cloudwhitelist 2>/dev/null || true
   ipset destroy cloudblock 2>/dev/null || true
   rm -f "$SCRIPT_PATH" "$CRON_FILE" "$LOGFILE"
+  apt-get remove -y -qq ipset iptables jq >/dev/null 2>&1 || true
   log "✅ 已卸载并清理所有相关文件与依赖。"
 }
 
