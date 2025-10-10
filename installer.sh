@@ -38,17 +38,28 @@ TMP_V4="$TMPDIR/prefixes_v4.txt"
 
 # 仅封禁中国国内主要云厂商 ASN
 ASNS=(
-  "37963"  # 阿里云
-  "45102"  # 阿里云
-  "55967"  # 阿里云
-  "132203" # 腾讯云
-  "132591" # 腾讯云
-  "55990"  # 华为云
-  "38365"  # 百度云
-  "139620" # 京东云
-  "58879"  # 京东云
+  # 🟠 阿里云 Alibaba Cloud
+  "37963"   # 阿里云
+  "45102"   # 阿里云
+  "55967"   # 阿里云
+  # 🔵 腾讯云 Tencent Cloud
+  "132203"  # 腾讯云
+  "132591"  # 腾讯云
+  # 🟣 华为云 Huawei Cloud
+  "55990"   # 华为云
+  # 🔴 百度云 Baidu Cloud
+  "38365"   # 百度云
+  # 🟢 京东云 JD Cloud
+  "139620"  # 京东云
+  "58879"   # 京东云
+  # 🟣 火山引擎 Volcengine (ByteDance Cloud)
+  "139242"  # 火山引擎
+  "140633"  # 火山引擎
+  # 🟢 UCloud 优刻得
+  "133219"  # UCloud
+  # 🟣 金山云 Kingsoft Cloud
+  "55805"   # 金山云
 )
-
 timestamp() { date +"%Y-%m-%d %H:%M:%S"; }
 log() { echo "[$(timestamp)] $*" | tee -a "$LOGFILE"; }
 
