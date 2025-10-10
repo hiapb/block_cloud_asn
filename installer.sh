@@ -1,6 +1,6 @@
 #!/bin/bash
 # ================================================================
-#  中国云厂商 ASN 封禁脚本 - 安静版交互菜单
+#  中国云厂商 ASN 封禁管理脚本 - 交互版
 #  作者：hiapb
 # ================================================================
 set -euo pipefail
@@ -8,6 +8,7 @@ set -euo pipefail
 LOGFILE="/var/log/block_cloud_asn.log"
 SCRIPT_PATH="/usr/local/bin/block_cloud_asn.sh"
 CRON_FILE="/etc/cron.d/block_cloud_asn"
+DEPENDENCIES=(ipset iptables jq)  # ❌ curl 不卸载
 
 timestamp() { date +"%Y-%m-%d %H:%M:%S"; }
 log() { echo "[$(timestamp)] $*" | tee -a "$LOGFILE"; }
@@ -86,7 +87,6 @@ main() {
   rm -rf "$TMPDIR"
   log "✅ 国内云厂商 ASN 封禁完成"
 }
-
 main "$@"
 EOF
   chmod +x "$SCRIPT_PATH"
@@ -111,13 +111,35 @@ install_firewall() {
   log "✅ 安装完成！日志位置：$LOGFILE"
 }
 
+refresh_rules() {
+  if [ ! -f "$SCRIPT_PATH" ]; then
+    echo "❌ 未检测到主脚本，请先执行安装。"
+    return
+  fi
+  log "🔁 手动刷新 ASN 数据..."
+  bash "$SCRIPT_PATH"
+  log "✅ 刷新完成。"
+}
+
+show_blocked_info() {
+  if ! ipset list cloudblock &>/dev/null; then
+    echo "❌ 当前未创建封禁规则。"
+    return
+  fi
+  total=$(ipset -L cloudblock | grep -cE '^[0-9]')
+  echo "📊 当前已封禁的 IPv4 段数：$total"
+  echo "🔍 示例（前 20 条）："
+  ipset list cloudblock | grep -E '^[0-9]' | head -n 20
+}
+
 uninstall_firewall() {
-  log "🧹 清空所有封禁规则并卸载..."
+  log "🧹 卸载并清理所有内容..."
   iptables -D INPUT -m set --match-set cloudblock src -j DROP 2>/dev/null || true
   iptables -D FORWARD -m set --match-set cloudblock src -j DROP 2>/dev/null || true
   ipset destroy cloudblock 2>/dev/null || true
-  rm -f "$SCRIPT_PATH" "$CRON_FILE"
-  log "✅ 已清理完毕，防火墙规则与脚本已删除。"
+  rm -f "$SCRIPT_PATH" "$CRON_FILE" "$LOGFILE"
+  apt-get remove -y -qq ipset iptables jq >/dev/null 2>&1 || true
+  log "✅ 已卸载并清理所有相关文件与依赖（curl 保留）。"
 }
 
 show_menu() {
@@ -126,16 +148,18 @@ show_menu() {
   echo "☁️ 中国云厂商 ASN 封禁管理"
   echo "============================"
   echo "1️⃣  安装并启用封禁规则"
-  echo "2️⃣  卸载并清空所有规则"
-  echo "3️⃣  查看日志"
-  echo "4️⃣  退出"
+  echo "2️⃣  手动刷新 ASN 数据"
+  echo "3️⃣  查看当前封禁统计"
+  echo "4️⃣  卸载并清理所有内容"
+  echo "5️⃣  退出"
   echo "============================"
-  read -p "请输入选项 [1-4]: " choice
+  read -p "请输入选项 [1-5]: " choice
   case "$choice" in
     1) install_firewall ;;
-    2) uninstall_firewall ;;
-    3) less -f "$LOGFILE" ;;
-    4) echo "再见 👋"; exit 0 ;;
+    2) refresh_rules ;;
+    3) show_blocked_info ;;
+    4) uninstall_firewall ;;
+    5) echo "👋 再见！"; exit 0 ;;
     *) echo "❌ 无效选项"; sleep 1; show_menu ;;
   esac
 }
