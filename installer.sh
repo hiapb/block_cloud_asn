@@ -8,7 +8,7 @@ set -euo pipefail
 LOGFILE="/var/log/block_cloud_asn.log"
 SCRIPT_PATH="/usr/local/bin/block_cloud_asn.sh"
 CRON_FILE="/etc/cron.d/block_cloud_asn"
-DEPENDENCIES=(ipset iptables jq)  # ❌ curl 不卸载
+DEPENDENCIES=(ipset iptables jq) 
 
 timestamp() { date +"%Y-%m-%d %H:%M:%S"; }
 log() { echo "[$(timestamp)] $*" | tee -a "$LOGFILE"; }
@@ -139,7 +139,7 @@ uninstall_firewall() {
   ipset destroy cloudblock 2>/dev/null || true
   rm -f "$SCRIPT_PATH" "$CRON_FILE" "$LOGFILE"
   apt-get remove -y -qq ipset iptables jq >/dev/null 2>&1 || true
-  log "✅ 已卸载并清理所有相关文件与依赖（curl 保留）。"
+  log "✅ 已卸载并清理所有相关文件与依赖。"
 }
 
 show_menu() {
