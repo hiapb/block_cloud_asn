@@ -1,6 +1,6 @@
 #!/bin/bash
 # ================================================================
-#  中国云厂商 ASN 封禁管理脚本
+#  中国云厂商 ASN 封禁管理脚本 - 交互版
 #  作者：hiapb
 # ================================================================
 set -euo pipefail
@@ -8,7 +8,7 @@ set -euo pipefail
 LOGFILE="/var/log/block_cloud_asn.log"
 SCRIPT_PATH="/usr/local/bin/block_cloud_asn.sh"
 CRON_FILE="/etc/cron.d/block_cloud_asn"
-DEPENDENCIES=(ipset iptables jq curl)
+DEPENDENCIES=(ipset iptables jq) 
 
 timestamp() { date +"%Y-%m-%d %H:%M:%S"; }
 log() { echo "[$(timestamp)] $*" | tee -a "$LOGFILE"; }
@@ -22,8 +22,9 @@ require_root() {
 
 install_deps() {
   log "📦 安装依赖包..."
-  apt-get update -y -qq >/dev/null 2>&1
-  apt-get install -y -qq "${DEPENDENCIES[@]}" >/dev/null 2>&1
+  # 屏蔽 apt 的警告信息
+  LC_ALL=C apt-get update -y -qq >/dev/null 2>&1
+  LC_ALL=C apt-get install -y -qq ipset iptables curl jq >/dev/null 2>&1
 }
 
 create_main_script() {
@@ -35,23 +36,35 @@ LOGFILE="/var/log/block_cloud_asn.log"
 TMPDIR="$(mktemp -d /tmp/block_asn.XXXX)"
 TMP_V4="$TMPDIR/prefixes_v4.txt"
 
+# 仅封禁中国国内主要云厂商 ASN
 ASNS=(
-  "37963" "45102" "55967"   # 阿里云
-  "132203" "132591"         # 腾讯云
-  "55990"                   # 华为云
-  "38365"                   # 百度云
-  "139620" "58879"          # 京东云
-  "139242" "140633"         # 火山引擎
-  "133219"                  # UCloud
-  "55805"                   # 金山云
+  # 🟠 阿里云 Alibaba Cloud
+  "37963"   # 阿里云
+  "45102"   # 阿里云
+  "55967"   # 阿里云
+  # 🔵 腾讯云 Tencent Cloud
+  "132203"  # 腾讯云
+  "132591"  # 腾讯云
+  # 🟣 华为云 Huawei Cloud
+  "55990"   # 华为云
+  # 🔴 百度云 Baidu Cloud
+  "38365"   # 百度云
+  # 🟢 京东云 JD Cloud
+  "139620"  # 京东云
+  "58879"   # 京东云
+  # 🟣 火山引擎 Volcengine (ByteDance Cloud)
+  "139242"  # 火山引擎
+  "140633"  # 火山引擎
+  # 🟢 UCloud 优刻得
+  "133219"  # UCloud
+  # 🟣 金山云 Kingsoft Cloud
+  "55805"   # 金山云
 )
-
 timestamp() { date +"%Y-%m-%d %H:%M:%S"; }
 log() { echo "[$(timestamp)] $*" | tee -a "$LOGFILE"; }
 
 create_ipset() {
   ipset list cloudblock &>/dev/null || ipset create cloudblock hash:net family inet
-  ipset list cloudwhitelist &>/dev/null || ipset create cloudwhitelist hash:net family inet
   ipset flush cloudblock || true
 }
 
@@ -73,15 +86,8 @@ apply_rules() {
     [[ -z "$net" ]] && continue
     ipset add cloudblock "$net" 2>/dev/null && ((added++)) || true
   done <"$TMP_V4"
-
-  # 白名单优先放行
-  iptables -C INPUT -m set --match-set cloudwhitelist src -j ACCEPT 2>/dev/null || iptables -I INPUT -m set --match-set cloudwhitelist src -j ACCEPT
-  iptables -C FORWARD -m set --match-set cloudwhitelist src -j ACCEPT 2>/dev/null || iptables -I FORWARD -m set --match-set cloudwhitelist src -j ACCEPT
-
-  # 云厂商封禁
-  iptables -C INPUT -m set --match-set cloudblock src -j DROP 2>/dev/null || iptables -A INPUT -m set --match-set cloudblock src -j DROP
-  iptables -C FORWARD -m set --match-set cloudblock src -j DROP 2>/dev/null || iptables -A FORWARD -m set --match-set cloudblock src -j DROP
-
+  iptables -C INPUT -m set --match-set cloudblock src -j DROP 2>/dev/null || iptables -I INPUT -m set --match-set cloudblock src -j DROP
+  iptables -C FORWARD -m set --match-set cloudblock src -j DROP 2>/dev/null || iptables -I FORWARD -m set --match-set cloudblock src -j DROP
   total=$(ipset -L cloudblock -o save | grep -cE '^[^#]')
   log "✅ 本次添加 IPv4 前缀: $added"
   log "📊 当前总计封禁 IPv4: $total"
@@ -117,7 +123,6 @@ install_firewall() {
   log "🚀 立即执行首次封禁..."
   bash "$SCRIPT_PATH"
   log "✅ 安装完成！日志位置：$LOGFILE"
-  sleep 2
 }
 
 refresh_rules() {
@@ -133,160 +138,44 @@ refresh_rules() {
 show_blocked_info() {
   if ! ipset list cloudblock &>/dev/null; then
     echo "❌ 当前未创建封禁规则。"
-    read -p "按回车键返回菜单..."
     return
   fi
-
-  # 读取所有条目到数组（每行一个）
-  mapfile -t lines < <(ipset -L cloudblock | grep -E '^[0-9]')
-  total=${#lines[@]}
-
-  if [ "$total" -eq 0 ]; then
-    echo "📭 当前没有封禁条目。"
-    read -p "按回车键返回菜单..."
-    return
-  fi
-
-  page_size=20                        # 每页显示多少条（可按需调整）
-  pages=$(( (total + page_size - 1) / page_size ))
-  page=1
-
-  while true; do
-    clear
-    echo "📊 当前已封禁 IPv4 段数：$total    第 ${page}/${pages} 页"
-    echo "-------------------------------------------------"
-    start=$(( (page - 1) * page_size ))
-    end=$(( start + page_size ))
-    [ "$end" -gt "$total" ] && end=$total
-
-    for ((i = start; i < end; i++)); do
-      echo "${lines[i]}"
-    done
-
-    echo "-------------------------------------------------"
-    echo "[n] 下一页(回车同n)  [p] 上一页  [f] 第一页  [l] 最后一页"
-    echo "[a] 显示全部  [e] 导出到 /root/cloudblock_list.txt  [q] 返回菜单"
-    read -p "选择: " opt
-
-    case "$opt" in
-      n|N|"")
-        if [ "$page" -lt "$pages" ]; then page=$((page + 1)); else
-          echo "已到最后一页。"
-          sleep 1
-        fi
-        ;;
-      p|P)
-        if [ "$page" -gt 1 ]; then page=$((page - 1)); else
-          echo "已到第一页。"
-          sleep 1
-        fi
-        ;;
-      f|F) page=1 ;;
-      l|L) page=$pages ;;
-      a|A)
-        clear
-        printf "%s\n" "${lines[@]}"
-        echo "------------------ 显示完毕 ------------------"
-        read -p "按回车返回分页显示..."
-        ;;
-      e|E)
-        printf "%s\n" "${lines[@]}" > /root/cloudblock_list.txt
-        echo "✅ 已导出到 /root/cloudblock_list.txt"
-        read -p "按回车返回分页显示..."
-        ;;
-      q|Q)
-        break
-        ;;
-      *)
-        echo "⚠️ 无效选项"
-        sleep 1
-        ;;
-    esac
-  done
-}
-
-# ==============================
-# 🧩 白名单管理功能
-# ==============================
-whitelist_menu() {
-  while true; do
-    clear
-    echo "============================"
-    echo "🟢 白名单管理"
-    echo "============================"
-    echo "1️⃣ 查看白名单"
-    echo "2️⃣ 添加 IP/IP 段"
-    echo "3️⃣ 删除 IP/IP 段"
-    echo "4️⃣ 返回上级菜单"
-    echo "============================"
-    read -p "请选择 [1-4]: " wopt
-    case "$wopt" in
-      1)
-        if ! ipset list cloudwhitelist &>/dev/null; then
-          echo "❌ 白名单尚未创建。"
-        else
-          echo "📋 当前白名单列表："
-          ipset list cloudwhitelist | grep -E '^[0-9]' || echo "(空)"
-        fi
-        read -p "按回车键继续..."
-        ;;
-      2)
-        read -p "请输入要添加的 IP 或网段: " ip
-        ipset -! add cloudwhitelist "$ip" && echo "✅ 已添加到白名单。" || echo "⚠️ 添加失败。"
-        ;;
-      3)
-        read -p "请输入要删除的 IP 或网段: " ip
-        ipset -! del cloudwhitelist "$ip" && echo "🗑️ 已删除。" || echo "⚠️ 删除失败。"
-        ;;
-      4)
-        break
-        ;;
-      *)
-        echo "❌ 无效选项"; sleep 1;;
-    esac
-  done
+  total=$(ipset -L cloudblock | grep -cE '^[0-9]')
+  echo "📊 当前已封禁的 IPv4 段数：$total"
+  echo "🔍 示例（前 20 条）："
+  ipset list cloudblock | grep -E '^[0-9]' | head -n 20
 }
 
 uninstall_firewall() {
   log "🧹 卸载并清理所有内容..."
-  iptables -D INPUT -m set --match-set cloudwhitelist src -j ACCEPT 2>/dev/null || true
-  iptables -D FORWARD -m set --match-set cloudwhitelist src -j ACCEPT 2>/dev/null || true
   iptables -D INPUT -m set --match-set cloudblock src -j DROP 2>/dev/null || true
   iptables -D FORWARD -m set --match-set cloudblock src -j DROP 2>/dev/null || true
-  ipset destroy cloudwhitelist 2>/dev/null || true
   ipset destroy cloudblock 2>/dev/null || true
   rm -f "$SCRIPT_PATH" "$CRON_FILE" "$LOGFILE"
   apt-get remove -y -qq ipset iptables jq >/dev/null 2>&1 || true
   log "✅ 已卸载并清理所有相关文件与依赖。"
-  echo "👋 已完成卸载并退出。"
-  sleep 2
-  exit 0
 }
 
 show_menu() {
-  while true; do
-    clear
-    echo "============================"
-    echo "☁️ 中国云厂商 ASN 封禁管理"
-    echo "============================"
-    echo "1️⃣ 安装并启用封禁规则"
-    echo "2️⃣ 手动刷新 ASN 数据"
-    echo "3️⃣ 查看当前封禁统计"
-    echo "4️⃣ 白名单管理"
-    echo "5️⃣ 卸载并清理"
-    echo "6️⃣ 退出"
-    echo "============================"
-    read -p "请输入选项 [1-6]: " choice
-    case "$choice" in
-      1) install_firewall ;;
-      2) refresh_rules ;;
-      3) show_blocked_info ;;
-      4) whitelist_menu ;;
-      5) uninstall_firewall ;;
-      6) echo "👋 再见！"; exit 0 ;;
-      *) echo "❌ 无效选项"; sleep 1 ;;
-    esac
-  done
+  clear
+  echo "============================"
+  echo "☁️ 中国云厂商 ASN 封禁管理"
+  echo "============================"
+  echo "1️⃣  安装并启用封禁规则"
+  echo "2️⃣  手动刷新 ASN 数据"
+  echo "3️⃣  查看当前封禁统计"
+  echo "4️⃣  卸载并清理所有内容"
+  echo "5️⃣  退出"
+  echo "============================"
+  read -p "请输入选项 [1-5]: " choice
+  case "$choice" in
+    1) install_firewall ;;
+    2) refresh_rules ;;
+    3) show_blocked_info ;;
+    4) uninstall_firewall ;;
+    5) echo "👋 再见！"; exit 0 ;;
+    *) echo "❌ 无效选项"; sleep 1; show_menu ;;
+  esac
 }
 
 require_root
