@@ -1,6 +1,6 @@
 #!/bin/bash
 # ================================================================
-#  中国云厂商 ASN 封禁脚本 - 精简安全交互版
+#  中国云厂商 ASN 封禁脚本 - 安静版交互菜单
 #  作者：hiapb（增强版 by ChatGPT）
 # ================================================================
 set -euo pipefail
@@ -19,17 +19,11 @@ require_root() {
   fi
 }
 
-fix_locale() {
-  log "🌐 设置系统语言环境..."
-  export LC_ALL=C.UTF-8
-  export LANG=C.UTF-8
-  export LANGUAGE=C.UTF-8
-}
-
 install_deps() {
   log "📦 安装依赖包..."
-  apt-get update -y >/dev/null
-  apt-get install -y ipset iptables curl jq >/dev/null
+  # 屏蔽 apt 的警告信息
+  LC_ALL=C apt-get update -y -qq >/dev/null 2>&1
+  LC_ALL=C apt-get install -y -qq ipset iptables curl jq >/dev/null 2>&1
 }
 
 create_main_script() {
@@ -63,10 +57,10 @@ fetch_asn_prefixes() {
   local asn="$1"
   log "🚫 获取 ASN${asn} 的 IP 段..."
   curl -s "https://api.bgpview.io/asn/${asn}/prefixes" |
-    jq -r '.data.ipv4_prefixes[].prefix' >>"$TMP_V4" || true
+    jq -r '.data.ipv4_prefixes[].prefix' >>"$TMP_V4" 2>/dev/null || true
   if [ ! -s "$TMP_V4" ]; then
     curl -s "https://ipinfo.io/AS${asn}" |
-      grep -Eo '([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+)' >>"$TMP_V4" || true
+      grep -Eo '([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+)' >>"$TMP_V4" 2>/dev/null || true
   fi
 }
 
@@ -107,7 +101,6 @@ EOF
 }
 
 install_firewall() {
-  fix_locale
   install_deps
   touch "$LOGFILE"
   chmod 640 "$LOGFILE"
