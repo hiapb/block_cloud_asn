@@ -1,6 +1,7 @@
 #!/bin/bash
 # ================================================================
-#  云厂商 ASN 自动封禁脚本 - 一键管理菜单版
+#  中国云厂商 ASN 封禁脚本 - 精简安全交互版
+#  作者：hiapb（增强版 by ChatGPT）
 # ================================================================
 set -euo pipefail
 
@@ -19,18 +20,16 @@ require_root() {
 }
 
 fix_locale() {
-  log "🌐 检查并修复系统语言设置..."
-  export LC_ALL=en_US.UTF-8
-  export LANG=en_US.UTF-8
-  export LANGUAGE=en_US.UTF-8
-  apt install -y locales >/dev/null 2>&1 || true
-  locale-gen en_US.UTF-8 >/dev/null 2>&1 || true
+  log "🌐 设置系统语言环境..."
+  export LC_ALL=C.UTF-8
+  export LANG=C.UTF-8
+  export LANGUAGE=C.UTF-8
 }
 
 install_deps() {
   log "📦 安装依赖包..."
-  apt update -y >/dev/null
-  apt install -y ipset iptables curl jq >/dev/null
+  apt-get update -y >/dev/null
+  apt-get install -y ipset iptables curl jq >/dev/null
 }
 
 create_main_script() {
@@ -41,23 +40,23 @@ set -euo pipefail
 LOGFILE="/var/log/block_cloud_asn.log"
 TMPDIR="$(mktemp -d /tmp/block_asn.XXXX)"
 TMP_V4="$TMPDIR/prefixes_v4.txt"
-TMP_V6="$TMPDIR/prefixes_v6.txt"
 
+# 仅封禁中国国内主要云厂商 ASN
 ASNS=(
-  "37963" "45102" "132203" "132591"
-  "55990" "38365" "16509" "14618"
-  "15169" "8075" "13335" "20473"
-  "14061" "24940" "63949"
+  "37963"   # 阿里云
+  "45102"   # 阿里云
+  "132203"  # 腾讯云
+  "132591"  # 腾讯云
+  "55990"   # 华为云
+  "38365"   # 百度云
 )
 
 timestamp() { date +"%Y-%m-%d %H:%M:%S"; }
 log() { echo "[$(timestamp)] $*" | tee -a "$LOGFILE"; }
 
-create_ipsets() {
+create_ipset() {
   ipset list cloudblock &>/dev/null || ipset create cloudblock hash:net family inet
-  ipset list cloudblock6 &>/dev/null || ipset create cloudblock6 hash:net family inet6
   ipset flush cloudblock || true
-  ipset flush cloudblock6 || true
 }
 
 fetch_asn_prefixes() {
@@ -65,48 +64,33 @@ fetch_asn_prefixes() {
   log "🚫 获取 ASN${asn} 的 IP 段..."
   curl -s "https://api.bgpview.io/asn/${asn}/prefixes" |
     jq -r '.data.ipv4_prefixes[].prefix' >>"$TMP_V4" || true
-  curl -s "https://api.bgpview.io/asn/${asn}/prefixes" |
-    jq -r '.data.ipv6_prefixes[].prefix' >>"$TMP_V6" || true
   if [ ! -s "$TMP_V4" ]; then
     curl -s "https://ipinfo.io/AS${asn}" |
       grep -Eo '([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+)' >>"$TMP_V4" || true
   fi
-  if [ ! -s "$TMP_V6" ]; then
-    curl -s "https://ipinfo.io/AS${asn}" |
-      grep -Eo '([0-9a-fA-F:]+:[0-9a-fA-F:]*\/[0-9]+)' >>"$TMP_V6" || true
-  fi
 }
 
 apply_rules() {
-  local added4=0 added6=0
+  local added=0
   sort -u -o "$TMP_V4" "$TMP_V4" || true
-  sort -u -o "$TMP_V6" "$TMP_V6" || true
   while read -r net; do
     [[ -z "$net" ]] && continue
-    ipset add cloudblock "$net" 2>/dev/null && ((added4++)) || true
+    ipset add cloudblock "$net" 2>/dev/null && ((added++)) || true
   done <"$TMP_V4"
-  while read -r net; do
-    [[ -z "$net" ]] && continue
-    ipset add cloudblock6 "$net" 2>/dev/null && ((added6++)) || true
-  done <"$TMP_V6"
   iptables -C INPUT -m set --match-set cloudblock src -j DROP 2>/dev/null || iptables -I INPUT -m set --match-set cloudblock src -j DROP
   iptables -C FORWARD -m set --match-set cloudblock src -j DROP 2>/dev/null || iptables -I FORWARD -m set --match-set cloudblock src -j DROP
-  ip6tables -C INPUT -m set --match-set cloudblock6 src -j DROP 2>/dev/null || ip6tables -I INPUT -m set --match-set cloudblock6 src -j DROP
-  ip6tables -C FORWARD -m set --match-set cloudblock6 src -j DROP 2>/dev/null || ip6tables -I FORWARD -m set --match-set cloudblock6 src -j DROP
-  total4=$(ipset -L cloudblock -o save | grep -cE '^[^#]')
-  total6=$(ipset -L cloudblock6 -o save | grep -cE '^[^#]')
-  log "✅ 本次添加 IPv4 前缀: $added4，IPv6 前缀: $added6"
-  log "📊 当前总计封禁 IPv4: $total4，IPv6: $total6"
+  total=$(ipset -L cloudblock -o save | grep -cE '^[^#]')
+  log "✅ 本次添加 IPv4 前缀: $added"
+  log "📊 当前总计封禁 IPv4: $total"
 }
 
 main() {
-  create_ipsets
+  create_ipset
   : >"$TMP_V4"
-  : >"$TMP_V6"
   for a in "${ASNS[@]}"; do fetch_asn_prefixes "$a"; done
   apply_rules
   rm -rf "$TMPDIR"
-  log "✅ 云厂商 ASN 封禁完成"
+  log "✅ 国内云厂商 ASN 封禁完成"
 }
 
 main "$@"
@@ -138,10 +122,7 @@ uninstall_firewall() {
   log "🧹 清空所有封禁规则并卸载..."
   iptables -D INPUT -m set --match-set cloudblock src -j DROP 2>/dev/null || true
   iptables -D FORWARD -m set --match-set cloudblock src -j DROP 2>/dev/null || true
-  ip6tables -D INPUT -m set --match-set cloudblock6 src -j DROP 2>/dev/null || true
-  ip6tables -D FORWARD -m set --match-set cloudblock6 src -j DROP 2>/dev/null || true
   ipset destroy cloudblock 2>/dev/null || true
-  ipset destroy cloudblock6 2>/dev/null || true
   rm -f "$SCRIPT_PATH" "$CRON_FILE"
   log "✅ 已清理完毕，防火墙规则与脚本已删除。"
 }
@@ -149,7 +130,7 @@ uninstall_firewall() {
 show_menu() {
   clear
   echo "============================"
-  echo "☁️ 云厂商 ASN 封禁管理工具"
+  echo "☁️ 中国云厂商 ASN 封禁管理"
   echo "============================"
   echo "1️⃣  安装并启用封禁规则"
   echo "2️⃣  卸载并清空所有规则"
