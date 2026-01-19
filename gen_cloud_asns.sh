@@ -107,7 +107,7 @@ main() {
 
   local tmp
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+  trap 'rm -rf "${tmp:-}"' EXIT
 
   local all="$tmp/all.tsv"
   : >"$all"
