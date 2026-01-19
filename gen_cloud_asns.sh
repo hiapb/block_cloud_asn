@@ -105,8 +105,9 @@ QUERIES=(
 main() {
   ensure_deps
 
-  local tmp
+  local tmp=""
   tmp="$(mktemp -d)"
+  # FIX: avoid "tmp: unbound variable" under set -u
   trap 'rm -rf "${tmp:-}"' EXIT
 
   local all="$tmp/all.tsv"
