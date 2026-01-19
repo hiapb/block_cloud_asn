@@ -58,13 +58,41 @@ create_ipset() {
 fetch_asn_prefixes() {
   local asn="$1"
   log "🚫 获取 ASN${asn} 的 IP 段..."
-  curl -s "https://api.bgpview.io/asn/${asn}/prefixes" |
-    jq -r '.data.ipv4_prefixes[].prefix' >>"$TMP_V4" 2>/dev/null || true
-  if [ ! -s "$TMP_V4" ]; then
-    curl -s "https://ipinfo.io/AS${asn}" |
-      grep -Eo '([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+)' >>"$TMP_V4" 2>/dev/null || true
+
+  local ok=0
+
+  # ---------- Source A: RIPEstat (recommended) ----------
+  # https://stat.ripe.net/data/announced-prefixes/data.json?resource=ASxxxxx
+  local ripe_url="https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS${asn}"
+  local code
+  code=$(curl -sS -m 15 -o "$TMPDIR/ripe_${asn}.json" -w "%{http_code}" "$ripe_url" || echo "curl_fail")
+  if [[ "$code" == "200" ]] && [[ -s "$TMPDIR/ripe_${asn}.json" ]]; then
+    # data.prefixes[].prefix
+    jq -r '.data.prefixes[].prefix' "$TMPDIR/ripe_${asn}.json" \
+      | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]+' >>"$TMP_V4" || true
+    ok=1
+  else
+    log "⚠️ RIPEstat 失败: ASN${asn} HTTP=${code}"
+  fi
+
+  # ---------- Source B: bgp.he.net (HTML scrape fallback) ----------
+  if [[ "$ok" -eq 0 ]]; then
+    local he_url="https://bgp.he.net/AS${asn}#_prefixes"
+    code=$(curl -sS -m 15 -o "$TMPDIR/he_${asn}.html" -w "%{http_code}" "$he_url" || echo "curl_fail")
+    if [[ "$code" == "200" ]] && [[ -s "$TMPDIR/he_${asn}.html" ]]; then
+      # 粗暴抓 CIDR（页面里通常有 /xx）
+      grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]+' "$TMPDIR/he_${asn}.html" >>"$TMP_V4" || true
+      ok=1
+    else
+      log "⚠️ bgp.he.net 失败: ASN${asn} HTTP=${code}"
+    fi
+  fi
+
+  if [[ "$ok" -eq 0 ]]; then
+    log "❌ ASN${asn} 未获取到任何前缀（网络不可达或源不可用）"
   fi
 }
+
 
 apply_rules() {
   local added=0
@@ -82,7 +110,7 @@ apply_rules() {
   iptables -C INPUT -m set --match-set cloudblock src -j DROP 2>/dev/null || iptables -A INPUT -m set --match-set cloudblock src -j DROP
   iptables -C FORWARD -m set --match-set cloudblock src -j DROP 2>/dev/null || iptables -A FORWARD -m set --match-set cloudblock src -j DROP
 
-  total=$(ipset -L cloudblock -o save | grep -cE '^[^#]')
+  total=$(ipset list cloudblock | awk -F': ' '/Number of entries/ {print $2}')
   log "✅ 本次添加 IPv4 前缀: $added"
   log "📊 当前总计封禁 IPv4: $total"
 }
