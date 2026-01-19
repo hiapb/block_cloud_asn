@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gen_cloud_asns.sh - Print-ready ASN block for major China cloud vendors
 # Data source: RIPEstat searchcomplete (needs curl + jq)
-# Output: ASNS=( "xxxx" "yyyy" ... # comment )
+# bash <(curl -fsSL https://raw.githubusercontent.com/hiapb/block_cloud_asn/main/gen_cloud_asns.sh)
 set -euo pipefail
 
 # ===== Config =====
