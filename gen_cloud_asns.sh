@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # gen_cloud_asns.sh - Print-ready ASN block for major China cloud vendors
 # Data source: RIPEstat searchcomplete (needs curl + jq)
+# Output: ASNS=( "xxxx" "yyyy" ... # comment )
 set -euo pipefail
 
+# ===== Config =====
+# 1 = enable region filter (recommended), 0 = disable
+REGION_FILTER_ENABLE=1
+
+# Keep only these region suffixes in RIPEstat ASN descriptions (when enabled).
+# You can tighten/loosen this list.
+REGION_REGEX='(, CN|, HK|, SG|, TW|, JP|, KR|, US|, TH|, MY|, ID|, VN|, PH)\b'
+
+# ===== Helpers =====
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 install_deps_debian() {
@@ -43,34 +53,42 @@ fetch_asn_lines() {
       .data.categories[]?
       | select(.category=="ASNs")
       | .suggestions[]?
-      | "\(.label)\t\(.description)"'
+      | "\(.label)\t\(.description)"' 2>/dev/null || true
 }
 
 exclude_noise() {
   # Avoid obvious same-name unrelated orgs
-  grep -Ev 'ALIBABA-TRAVELS|TRAVELS-COMPANY'
+  grep -Ev 'ALIBABA-TRAVELS|TRAVELS-COMPANY' || true
+}
+
+maybe_region_filter() {
+  if [[ "${REGION_FILTER_ENABLE}" -eq 1 ]]; then
+    grep -E "${REGION_REGEX}" || true
+  else
+    cat
+  fi
 }
 
 extract_asn_numbers() {
-  grep -Eo 'AS[0-9]+' | sed 's/^AS//'
+  grep -Eo 'AS[0-9]+' | sed 's/^AS//' || true
 }
 
-# Matchers (tight-ish to reduce false positives)
-is_alibaba()   { grep -Eiq 'ALIBABA-CN-NET|ALIBABACLOUD' ; }
-is_tencent()   { grep -Eiq 'TENCENT|TENCENTCLOUD|QCLOUD' ; }
-is_huawei()    { grep -Eiq 'HUAWEI|HUAWEI CLOUD|HUAWEICLOUD' ; }
-is_baidu()     { grep -Eiq 'BAIDU' ; }
-is_jd()        { grep -Eiq 'JINGDONG|JD CLOUD|JD\.COM|JDCHINA|JD-?CLOUD' ; }
-is_volc()      { grep -Eiq 'BYTEDANCE|VOLCENGINE|VOLCANO ENGINE|BYTE DANCE' ; }
-is_ucloud()    { grep -Eiq 'UCLOUD' ; }
-is_kingsoft()  { grep -Eiq 'KINGSOFT|KSYUN|KS CLOUD' ; }
+# ===== Vendor matchers (tight-ish to reduce false positives) =====
+is_alibaba()   { grep -Eiq 'ALIBABA-CN-NET|ALIBABACLOUD' || return 1; }
+is_tencent()   { grep -Eiq 'TENCENT|TENCENTCLOUD|QCLOUD' || return 1; }
+is_huawei()    { grep -Eiq 'HUAWEI|HUAWEI CLOUD|HUAWEICLOUD' || return 1; }
+is_baidu()     { grep -Eiq 'BAIDU' || return 1; }
+is_jd()        { grep -Eiq 'JINGDONG|JD CLOUD|JD\.COM|JDCHINA|JD-?CLOUD' || return 1; }
+is_volc()      { grep -Eiq 'BYTEDANCE|VOLCENGINE|VOLCANO ENGINE|BYTE DANCE' || return 1; }
+is_ucloud()    { grep -Eiq 'UCLOUD' || return 1; }
+is_kingsoft()  { grep -Eiq 'KINGSOFT|KSYUN|KS CLOUD' || return 1; }
 
 QUERIES=(
   # Alibaba
   "alibaba" "aliyun" "alibabacloud"
   # Tencent
   "tencent" "qcloud" "tencentcloud"
-  # Huawei (searchcomplete sometimes needs broader terms)
+  # Huawei
   "huawei" "huawei cloud" "huaweicloud"
   # Baidu
   "baidu"
@@ -98,17 +116,21 @@ main() {
     fetch_asn_lines "$q" >>"$all" || true
   done
 
-  sort -u "$all" | exclude_noise >"$tmp/uniq.tsv"
+  # Normalize candidates
+  sort -u "$all" | exclude_noise | maybe_region_filter >"$tmp/uniq.tsv" || true
 
   group_asns() {
     local matcher="$1"
     local outfile="$2"
     : >"$outfile"
+
     while IFS= read -r line; do
       if echo "$line" | "$matcher" >/dev/null 2>&1; then
         echo "$line"
       fi
-    done <"$tmp/uniq.tsv" | extract_asn_numbers | sort -n -u >"$outfile"
+    done <"$tmp/uniq.tsv" \
+      | extract_asn_numbers \
+      | sort -n -u >"$outfile" || true
   }
 
   group_asns is_alibaba  "$tmp/alibaba.txt"
@@ -126,8 +148,7 @@ main() {
     if [[ -s "$file" ]]; then
       echo -n "  "
       while IFS= read -r n; do
-        [[ -z "$n" ]] && continue
-        echo -n "\"$n\" "
+        [[ -n "$n" ]] && echo -n "\"$n\" "
       done <"$file"
       echo "# $comment"
     else
