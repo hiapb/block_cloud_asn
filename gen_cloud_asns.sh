@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# gen_cloud_asns.sh
-# One-click generator for China cloud vendor ASN list using RIPEstat searchcomplete
-# Output format: ASNS=( "123" "456" ... # comment )
+# gen_cloud_asns.sh - Print-ready ASN block for major China cloud vendors
+# Data source: RIPEstat searchcomplete (needs curl + jq)
 set -euo pipefail
 
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -15,14 +14,15 @@ install_deps_debian() {
 ensure_deps() {
   local missing=0
   for c in curl jq; do
-    if ! need_cmd "$c"; then missing=1; fi
+    need_cmd "$c" || missing=1
   done
+
   if [[ "$missing" -eq 1 ]]; then
-    echo "[*] Installing dependencies: curl jq ca-certificates"
+    echo "[*] Installing dependencies (curl, jq, ca-certificates)..."
     if need_cmd apt-get; then
       install_deps_debian
     else
-      echo "[!] No apt-get found. Please install: curl jq ca-certificates"
+      echo "[!] apt-get not found. Please install curl + jq manually."
       exit 1
     fi
   fi
@@ -35,8 +35,8 @@ ensure_deps() {
   done
 }
 
-# Fetch RIPEstat searchcomplete ASN suggestions lines: "AS123\tDESC"
 fetch_asn_lines() {
+  # output: "AS12345<TAB>DESCRIPTION"
   local q="$1"
   curl -sS -m 25 "https://stat.ripe.net/data/searchcomplete/data.json?resource=${q// /%20}&limit=100" \
     | jq -r '
@@ -46,9 +46,8 @@ fetch_asn_lines() {
       | "\(.label)\t\(.description)"'
 }
 
-# Exclude obvious same-name noise (extend as needed)
 exclude_noise() {
-  # Example: ALIBABA-TRAVELS-COMPANY is not Alibaba Cloud
+  # Avoid obvious same-name unrelated orgs
   grep -Ev 'ALIBABA-TRAVELS|TRAVELS-COMPANY'
 }
 
@@ -56,7 +55,7 @@ extract_asn_numbers() {
   grep -Eo 'AS[0-9]+' | sed 's/^AS//'
 }
 
-# Vendor matchers: keep them reasonably strict to reduce false positives
+# Matchers (tight-ish to reduce false positives)
 is_alibaba()   { grep -Eiq 'ALIBABA-CN-NET|ALIBABACLOUD' ; }
 is_tencent()   { grep -Eiq 'TENCENT|TENCENTCLOUD|QCLOUD' ; }
 is_huawei()    { grep -Eiq 'HUAWEI|HUAWEI CLOUD|HUAWEICLOUD' ; }
@@ -66,15 +65,22 @@ is_volc()      { grep -Eiq 'BYTEDANCE|VOLCENGINE|VOLCANO ENGINE|BYTE DANCE' ; }
 is_ucloud()    { grep -Eiq 'UCLOUD' ; }
 is_kingsoft()  { grep -Eiq 'KINGSOFT|KSYUN|KS CLOUD' ; }
 
-# Query terms (multiple per vendor to increase recall)
 QUERIES=(
+  # Alibaba
   "alibaba" "aliyun" "alibabacloud"
+  # Tencent
   "tencent" "qcloud" "tencentcloud"
+  # Huawei (searchcomplete sometimes needs broader terms)
   "huawei" "huawei cloud" "huaweicloud"
+  # Baidu
   "baidu"
+  # JD
   "jingdong" "jdcloud" "jd cloud" "jd.com"
+  # ByteDance/Volcengine
   "bytedance" "volcengine" "volcano engine"
+  # UCloud
   "ucloud"
+  # Kingsoft Cloud
   "ksyun" "kingsoft"
 )
 
@@ -92,7 +98,6 @@ main() {
     fetch_asn_lines "$q" >>"$all" || true
   done
 
-  # uniq + noise filter
   sort -u "$all" | exclude_noise >"$tmp/uniq.tsv"
 
   group_asns() {
@@ -142,9 +147,6 @@ main() {
   print_line "$tmp/kingsoft.txt" "金山云（KSYUN / KINGSOFT）"
   echo ')'
   echo
-
-  echo "[*] Debug: saved raw RIPEstat ASN suggestion lines to: $tmp/uniq.tsv"
-  echo "[*] If some vendor is empty, inspect descriptions in that file and adjust matchers."
 }
 
 main "$@"
