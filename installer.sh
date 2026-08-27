@@ -1,6 +1,6 @@
 #!/bin/bash
 # ================================================================
-#  中国云厂商 ASN 封禁管理脚本
+#  云厂商 ASN 封禁管理脚本
 #  作者：hiapb
 # ================================================================
 set -euo pipefail
@@ -13,8 +13,16 @@ DEPENDENCIES=(ipset iptables jq curl)
 # ==============================
 # 云厂商 ASN 数据定义
 # ==============================
-CLOUD_NAMES=("阿里云" "腾讯云" "华为云" "百度云" "字节跳动/火山引擎" "UCloud(优刻得)" "金山云")
+CLOUD_NAMES=(
+  "阿里云" "腾讯云" "华为云" "百度云" "字节跳动/火山引擎" "UCloud(优刻得)" "金山云"
+  "Amazon_AWS" "Microsoft_Azure" "Google_Cloud" "Oracle_Cloud" "IBM_Cloud" 
+  "DigitalOcean" "Vultr" "Linode" "OVHcloud" "Hetzner" "IONOS" "Scaleway" 
+  "Cloudflare" "Rackspace" "UpCloud"
+)
+
 declare -A CLOUD_ASNS
+
+# ---------- 国内云厂商 ----------
 CLOUD_ASNS["阿里云"]="\"37963\" \"45102\" \"45103\" \"45104\" \"59028\" \"59051\" \"59052\" \"59053\" \"59054\" \"59055\" \"203513\" \"134963\" \"24429\" \"402205\" \"402206\" \"402207\" \"34947\""
 CLOUD_ASNS["腾讯云"]="\"9390\" \"45090\" \"132203\" \"132591\" \"133478\" \"137876\" \"58835\""
 CLOUD_ASNS["华为云"]="\"55990\" \"136907\" \"149640\" \"63727\" \"139144\" \"131444\" \"141180\" \"149167\""
@@ -22,6 +30,23 @@ CLOUD_ASNS["百度云"]="\"38365\" \"55967\" \"45076\" \"45085\" \"63728\" \"637
 CLOUD_ASNS["字节跳动/火山引擎"]="\"137718\" \"137775\" \"396986\" \"138699\""
 CLOUD_ASNS["UCloud(优刻得)"]="\"59077\" \"135377\" \"139327\""
 CLOUD_ASNS["金山云"]="\"59019\" \"137280\""
+
+# ---------- 国外主流云厂商 ----------
+CLOUD_ASNS["Amazon_AWS"]="\"16509\" \"14618\" \"8987\" \"7224\" \"38895\" \"19047\" \"62785\""
+CLOUD_ASNS["Microsoft_Azure"]="\"8075\" \"8068\" \"8069\" \"8070\" \"3598\""
+CLOUD_ASNS["Google_Cloud"]="\"15169\" \"396982\" \"19527\" \"36040\" \"43515\" \"139070\" \"394089\""
+CLOUD_ASNS["Oracle_Cloud"]="\"31898\""
+CLOUD_ASNS["IBM_Cloud"]="\"36351\" \"64999\""
+CLOUD_ASNS["DigitalOcean"]="\"14061\""
+CLOUD_ASNS["Vultr"]="\"20473\""
+CLOUD_ASNS["Linode"]="\"63949\""
+CLOUD_ASNS["OVHcloud"]="\"16276\""
+CLOUD_ASNS["Hetzner"]="\"24940\" \"213230\" \"212317\""
+CLOUD_ASNS["IONOS"]="\"8560\""
+CLOUD_ASNS["Scaleway"]="\"12876\""
+CLOUD_ASNS["Cloudflare"]="\"13335\" \"209242\" \"14789\""
+CLOUD_ASNS["Rackspace"]="\"27357\""
+CLOUD_ASNS["UpCloud"]="\"25697\""
 
 timestamp() { date +"%Y-%m-%d %H:%M:%S"; }
 log() { echo "[$(timestamp)] $*" | tee -a "$LOGFILE"; }
@@ -130,7 +155,7 @@ main() {
   for a in "${ASNS[@]}"; do fetch_asn_prefixes "$a"; done
   apply_rules
   rm -rf "$TMPDIR"
-  log "✅ 国内云厂商 ASN 封禁完成"
+  log "✅ 云厂商 ASN 封禁完成"
 }
 main "$@"
 EOF
@@ -150,14 +175,14 @@ install_firewall() {
   echo "============================"
   echo "🛡️ 请选择要封禁的云厂商范围："
   echo "============================"
-  echo "1️⃣ 封禁所有主要国内云厂商 (默认)"
+  echo "1️⃣ 封禁所有主要云厂商 (默认)"
   echo "2️⃣ 自定义选择"
   echo "============================"
   read -p "请选择 [1-2] (默认 1): " asn_choice
 
   local selected_asns=""
 
-  if [[ "$asn_choice" == "2" ]]; then
+ if [[ "$asn_choice" == "2" ]]; then
     echo ""
     echo "👉 请依次选择是否封禁 (直接回车默认为 Y)："
     for name in "${CLOUD_NAMES[@]}"; do
@@ -292,9 +317,9 @@ whitelist_menu() {
     echo "1️⃣ 查看白名单"
     echo "2️⃣ 添加 IP/IP 段"
     echo "3️⃣ 删除 IP/IP 段"
-    echo "4️⃣ 返回上级菜单"
+    echo "0️⃣ 返回上级菜单"
     echo "============================"
-    read -p "请选择 [1-4]: " wopt
+    read -p "请选择 [0-3]: " wopt
     case "$wopt" in
       1)
         if ! ipset list cloudwhitelist &>/dev/null; then
@@ -315,7 +340,7 @@ whitelist_menu() {
         ipset -! del cloudwhitelist "$ip" && echo "🗑️ 已删除。" || echo "⚠️ 删除失败。"
         sleep 1
         ;;
-      4) break ;;
+      0) break ;;
       *) echo "❌ 无效选项"; sleep 1;;
     esac
   done
@@ -340,23 +365,23 @@ show_menu() {
   while true; do
     clear
     echo "============================"
-    echo "☁️ 中国云厂商 ASN 封禁管理"
+    echo "☁️ 云厂商 ASN 封禁管理"
     echo "============================"
     echo "1️⃣ 安装并启用封禁规则"
     echo "2️⃣ 手动刷新 ASN 数据"
     echo "3️⃣ 查看当前封禁统计"
     echo "4️⃣ 白名单管理"
     echo "5️⃣ 卸载并清理"
-    echo "6️⃣ 退出"
+    echo "0️⃣ 退出"
     echo "============================"
-    read -p "请输入选项 [1-6]: " choice
+    read -p "请输入选项 [0-5]: " choice
     case "$choice" in
       1) install_firewall ;;
       2) refresh_rules ;;
       3) show_blocked_info ;;
       4) whitelist_menu ;;
       5) uninstall_firewall ;;
-      6) echo "👋 再见！"; exit 0 ;;
+      0) echo "👋 再见！"; exit 0 ;;
       *) echo "❌ 无效选项"; sleep 1 ;;
     esac
   done
