@@ -10,12 +10,25 @@ SCRIPT_PATH="/usr/local/bin/block_cloud_asn.sh"
 CRON_FILE="/etc/cron.d/block_cloud_asn"
 DEPENDENCIES=(ipset iptables jq curl)
 
+# ==============================
+# 云厂商 ASN 数据定义
+# ==============================
+CLOUD_NAMES=("阿里云" "腾讯云" "华为云" "百度云" "字节跳动/火山引擎" "UCloud(优刻得)" "金山云")
+declare -A CLOUD_ASNS
+CLOUD_ASNS["阿里云"]="\"37963\" \"45102\" \"45103\" \"45104\" \"59028\" \"59051\" \"59052\" \"59053\" \"59054\" \"59055\" \"203513\" \"134963\" \"24429\" \"402205\" \"402206\" \"402207\" \"34947\""
+CLOUD_ASNS["腾讯云"]="\"9390\" \"45090\" \"132203\" \"132591\" \"133478\" \"137876\" \"58835\""
+CLOUD_ASNS["华为云"]="\"55990\" \"136907\" \"149640\" \"63727\" \"139144\" \"131444\" \"141180\" \"149167\""
+CLOUD_ASNS["百度云"]="\"38365\" \"55967\" \"45076\" \"45085\" \"63728\" \"63729\" \"131138\" \"131139\" \"131140\" \"131141\" \"38627\" \"63288\" \"133746\" \"199506\""
+CLOUD_ASNS["字节跳动/火山引擎"]="\"137718\" \"137775\" \"396986\" \"138699\""
+CLOUD_ASNS["UCloud(优刻得)"]="\"59077\" \"135377\" \"139327\""
+CLOUD_ASNS["金山云"]="\"59019\" \"137280\""
+
 timestamp() { date +"%Y-%m-%d %H:%M:%S"; }
 log() { echo "[$(timestamp)] $*" | tee -a "$LOGFILE"; }
 
 require_root() {
   if [ "$EUID" -ne 0 ]; then
-    echo "❌ 请以 root 用户运行：sudo bash installer.sh"
+    echo "❌ 请以 root 用户运行：sudo bash $0"
     exit 1
   fi
 }
@@ -27,38 +40,24 @@ install_deps() {
 }
 
 create_main_script() {
+  local selected_asns="$1"
   log "🧱 写入主脚本：$SCRIPT_PATH"
-  cat > "$SCRIPT_PATH" <<'EOF'
+  
+  # 写入第一部分：动态变量解析
+  cat > "$SCRIPT_PATH" <<EOF
 #!/bin/bash
 set -euo pipefail
 LOGFILE="/var/log/block_cloud_asn.log"
-TMPDIR="$(mktemp -d /tmp/block_asn.XXXX)"
-TMP_V4="$TMPDIR/prefixes_v4.txt"
+TMPDIR="\$(mktemp -d /tmp/block_asn.XXXX)"
+TMP_V4="\$TMPDIR/prefixes_v4.txt"
 
 ASNS=(
-  # ========== 阿里云 / Alibaba Cloud ==========
-  "37963" "45102" "45103" "45104" "59028" "59051" "59052" "59053" "59054" "59055"
-  "203513" "134963" "24429" "402205" "402206" "402207" "34947"
-
-  # ========== 腾讯云 / Tencent Cloud ==========
-  "9390" "45090" "132203" "132591" "133478" "137876" "58835"
-
-  # ========== 华为云 / Huawei Cloud ==========
-  "55990" "136907" "149640" "63727" "139144" "131444" "141180" "149167"
-
-  # ========== 百度云 / Baidu Cloud ==========
-  "38365" "55967" "45076" "45085" "63728" "63729"
-  "131138" "131139" "131140" "131141" "38627" "63288" "133746" "199506"
-
-  # ========== 火山引擎 / 字节跳动 / Volcano Engine / ByteDance ==========
-  "137718" "137775" "396986" "138699"
-
-  # ========== UCloud / 优刻得 ==========
-  "59077" "135377" "139327"
-
-  # ========== 金山云 / Kingsoft Cloud / KSYUN ==========
-  "59019" "137280"
+$selected_asns
 )
+EOF
+
+  # 写入第二部分：核心逻辑代码（不解析变量）
+  cat >> "$SCRIPT_PATH" <<'EOF'
 
 timestamp() { date +"%Y-%m-%d %H:%M:%S"; }
 log() { echo "[$(timestamp)] $*" | tee -a "$LOGFILE"; }
@@ -76,12 +75,10 @@ fetch_asn_prefixes() {
   local ok=0
 
   # ---------- Source A: RIPEstat (recommended) ----------
-  # https://stat.ripe.net/data/announced-prefixes/data.json?resource=ASxxxxx
   local ripe_url="https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS${asn}"
   local code
   code=$(curl -sS -m 15 -o "$TMPDIR/ripe_${asn}.json" -w "%{http_code}" "$ripe_url" || echo "curl_fail")
   if [[ "$code" == "200" ]] && [[ -s "$TMPDIR/ripe_${asn}.json" ]]; then
-    # data.prefixes[].prefix
     jq -r '.data.prefixes[].prefix' "$TMPDIR/ripe_${asn}.json" \
       | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]+' >>"$TMP_V4" || true
     ok=1
@@ -94,7 +91,6 @@ fetch_asn_prefixes() {
     local he_url="https://bgp.he.net/AS${asn}#_prefixes"
     code=$(curl -sS -m 15 -o "$TMPDIR/he_${asn}.html" -w "%{http_code}" "$he_url" || echo "curl_fail")
     if [[ "$code" == "200" ]] && [[ -s "$TMPDIR/he_${asn}.html" ]]; then
-      # 粗暴抓 CIDR（页面里通常有 /xx）
       grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]+' "$TMPDIR/he_${asn}.html" >>"$TMP_V4" || true
       ok=1
     else
@@ -106,7 +102,6 @@ fetch_asn_prefixes() {
     log "❌ ASN${asn} 未获取到任何前缀（网络不可达或源不可用）"
   fi
 }
-
 
 apply_rules() {
   local added=0
@@ -151,25 +146,72 @@ EOF
 }
 
 install_firewall() {
+  clear
+  echo "============================"
+  echo "🛡️ 请选择要封禁的云厂商范围："
+  echo "============================"
+  echo "1️⃣ 封禁所有主要国内云厂商 (默认)"
+  echo "2️⃣ 自定义选择"
+  echo "============================"
+  read -p "请选择 [1-2] (默认 1): " asn_choice
+
+  local selected_asns=""
+
+  if [[ "$asn_choice" == "2" ]]; then
+    echo ""
+    echo "👉 请依次选择是否封禁 (直接回车默认为 Y)："
+    for name in "${CLOUD_NAMES[@]}"; do
+      read -p "是否封禁 [ $name ] ? [y/N]: " yn
+      case $yn in
+        [Nn]* ) 
+          echo "   ⚪ 已跳过 $name"
+          continue 
+          ;;
+        * ) 
+          selected_asns="$selected_asns
+  # $name
+  ${CLOUD_ASNS[$name]}"
+          ;;
+      esac
+    done
+    
+    if [[ -z "$selected_asns" ]]; then
+      echo "❌ 未选择任何云厂商，取消安装。"
+      sleep 2
+      return
+    fi
+  else
+    # 默认全部添加
+    for name in "${CLOUD_NAMES[@]}"; do
+      selected_asns="$selected_asns
+  # $name
+  ${CLOUD_ASNS[$name]}"
+    done
+  fi
+
   install_deps
   touch "$LOGFILE"
   chmod 640 "$LOGFILE"
-  create_main_script
+  
+  create_main_script "$selected_asns"
   create_cron_job
+  
   log "🚀 立即执行首次封禁..."
   bash "$SCRIPT_PATH"
   log "✅ 安装完成！日志位置：$LOGFILE"
-  sleep 2
+  read -p "按回车键返回菜单..."
 }
 
 refresh_rules() {
   if [ ! -f "$SCRIPT_PATH" ]; then
     echo "❌ 未检测到主脚本，请先执行安装。"
+    sleep 2
     return
   fi
   log "🔁 手动刷新 ASN 数据..."
   bash "$SCRIPT_PATH"
   log "✅ 刷新完成。"
+  read -p "按回车键返回菜单..."
 }
 
 show_blocked_info() {
@@ -179,7 +221,6 @@ show_blocked_info() {
     return
   fi
 
-  # 读取所有条目到数组（每行一个）
   mapfile -t lines < <(ipset -L cloudblock | grep -E '^[0-9]')
   total=${#lines[@]}
 
@@ -189,13 +230,13 @@ show_blocked_info() {
     return
   fi
 
-  page_size=20                        # 每页显示多少条（可按需调整）
+  page_size=20
   pages=$(( (total + page_size - 1) / page_size ))
   page=1
 
   while true; do
     clear
-    echo "📊 当前已封禁 IPv4 段数：$total    第 ${page}/${pages} 页"
+    echo "📊 当前已封禁 IPv4 段数：$total   第 ${page}/${pages} 页"
     echo "-------------------------------------------------"
     start=$(( (page - 1) * page_size ))
     end=$(( start + page_size ))
@@ -236,20 +277,12 @@ show_blocked_info() {
         echo "✅ 已导出到 /root/cloudblock_list.txt"
         read -p "按回车返回分页显示..."
         ;;
-      q|Q)
-        break
-        ;;
-      *)
-        echo "⚠️ 无效选项"
-        sleep 1
-        ;;
+      q|Q) break ;;
+      *) echo "⚠️ 无效选项"; sleep 1 ;;
     esac
   done
 }
 
-# ==============================
-# 🧩 白名单管理功能
-# ==============================
 whitelist_menu() {
   while true; do
     clear
@@ -275,16 +308,15 @@ whitelist_menu() {
       2)
         read -p "请输入要添加的 IP 或网段: " ip
         ipset -! add cloudwhitelist "$ip" && echo "✅ 已添加到白名单。" || echo "⚠️ 添加失败。"
+        sleep 1
         ;;
       3)
         read -p "请输入要删除的 IP 或网段: " ip
         ipset -! del cloudwhitelist "$ip" && echo "🗑️ 已删除。" || echo "⚠️ 删除失败。"
+        sleep 1
         ;;
-      4)
-        break
-        ;;
-      *)
-        echo "❌ 无效选项"; sleep 1;;
+      4) break ;;
+      *) echo "❌ 无效选项"; sleep 1;;
     esac
   done
 }
@@ -298,7 +330,6 @@ uninstall_firewall() {
   ipset destroy cloudwhitelist 2>/dev/null || true
   ipset destroy cloudblock 2>/dev/null || true
   rm -f "$SCRIPT_PATH" "$CRON_FILE" "$LOGFILE"
-  apt-get remove -y -qq ipset iptables jq >/dev/null 2>&1 || true
   log "✅ 已卸载并清理所有相关文件与依赖。"
   echo "👋 已完成卸载并退出。"
   sleep 2
